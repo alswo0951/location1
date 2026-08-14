@@ -997,7 +997,7 @@ function renderLog() {
         <td class="mono">${esc(l.barcode)}</td>
         <td>${esc(l.name || productLabel(l.barcode))}${l.note ? `<div class="pname" style="color:var(--critical);">${esc(l.note)}</div>` : ''}</td>
         <td class="right mono">${l.qty}</td>
-        <td class="mono">${esc(l.loc)}${l.merged ? ' <span class="badge merge">합짐</span>' : ''}</td>
+        <td class="mono">${esc(l.loc)}${l.merged ? ' <span class="badge merge">합짐</span>' : ''} <button class="btn ghost sm log-loc-edit" data-id="${l.id}" title="현장에서 실제로 적치한 위치가 다르면 여기서 정정하세요">수정</button></td>
         <td class="center">${l.is2plt ? '✓' : ''}</td>
         <td><button class="chip-toggle log-verify ${l.verified === true ? 'true' : l.verified === false ? 'false' : 'null'}">${l.verified === true ? 'TRUE' : l.verified === false ? 'FALSE' : '미확인'}</button></td>
       </tr>`).join('');
@@ -1093,6 +1093,37 @@ function openLocationDrawer(loc) {
 
 function closeDrawer() {
   document.getElementById('drawerBackdrop').classList.remove('open');
+}
+
+// 할당기록(로그) 한 건의 로케이션을 정정한다. 자동할당이 제안한 자리에 현장에서
+// 실제로는 다른 물건이 이미 있어서 다른 자리에 적치한 경우처럼, 기록만 바로잡아야 할 때 사용.
+function openLogLocEditor(id) {
+  const entry = state.log.find(l => l.id === id);
+  if (!entry) return;
+  const backdrop = document.getElementById('drawerBackdrop');
+  const body = document.getElementById('drawerBody');
+  body.innerHTML = `
+    <h3>로케이션 정정</h3>
+    <p class="card-sub">바코드 ${esc(entry.barcode)} · 수량 ${esc(entry.qty)}<br>제안된 로케이션에 현장에서 이미 다른 물건이 있는 등, 실제로 다른 자리에 적치했을 때 여기서 기록을 정정하세요.</p>
+    <div class="field"><label>새 로케이션</label><input type="text" id="dwLogLoc" value="${esc(entry.loc)}" placeholder="예: 1B-01-02"></div>
+    <div class="drawer-actions">
+      <button class="btn primary" id="dwLogLocSave">저장</button>
+      <button class="btn ghost" id="dwCancel">취소</button>
+    </div>
+  `;
+  backdrop.classList.add('open');
+  document.getElementById('dwCancel').onclick = closeDrawer;
+  backdrop.onclick = (e) => { if (e.target === backdrop) closeDrawer(); };
+  const input = document.getElementById('dwLogLoc');
+  input.focus(); input.select();
+  document.getElementById('dwLogLocSave').onclick = () => {
+    const newLoc = input.value.trim();
+    if (!newLoc) { toast('로케이션을 입력해주세요.', true); return; }
+    entry.loc = newLoc;
+    markDirty();
+    closeDrawer(); renderLog(); renderDashboard();
+    toast('로케이션이 정정되었습니다.');
+  };
 }
 
 function openTextDrawer(title, description, placeholder, onSubmit, submitLabel) {
@@ -1773,7 +1804,7 @@ function bindGlobalEvents() {
     const rows = currentHistoryDayLogs();
     if (rows.length === 0) { toast('선택한 날짜에 내보낼 입고 기록이 없습니다.', true); return; }
     const header = csvRow(['박스번호', '바코드', '정상수량', '불량수량', '정상로케이션', '불량로케이션']) + '\n';
-    const body = rows.map(l => csvRow(['', l.barcode, l.qty, '', l.loc, ''])).join('\n');
+    const body = rows.map(l => csvRow(['', l.barcode, l.qty, 0, l.loc, '00-00-00-00'])).join('\n');
     const pad = n => String(n).padStart(2, '0');
     const batchSuffix = state.ui.historyBatch === HISTORY_BATCH_NONE ? '_미지정'
       : state.ui.historyBatch ? `_${state.ui.historyBatch}` : '';
@@ -1816,6 +1847,9 @@ function bindGlobalEvents() {
       if (!entry) return;
       entry.verified = entry.verified === null ? true : entry.verified === true ? false : null;
       markDirty(); renderLog(); renderDashboard();
+    }
+    if (e.target.classList.contains('log-loc-edit')) {
+      openLogLocEditor(e.target.dataset.id);
     }
   });
 
@@ -2193,24 +2227,25 @@ function renderHistoryDayLog() {
     return;
   }
   // 업로드된 입고 양식 열 순서: 박스번호,바코드,정상수량,불량수량,정상로케이션,불량로케이션.
-  // 박스번호·불량수량·불량로케이션은 현재 시스템에서 관리하지 않아 빈 칸으로 둔다.
+  // 박스번호는 현재 시스템에서 관리하지 않아 빈 칸으로 두고, 불량수량/불량로케이션은
+  // 현장 운영 방식에 맞춰 항상 0 / 00-00-00-00 으로 통일해서 채운다.
   body.innerHTML = rows.map(l => `
     <tr>
       <td class="mono muted">&nbsp;</td>
       <td class="mono">${esc(l.barcode)}</td>
       <td class="right mono">${l.qty}</td>
-      <td class="right mono muted">&nbsp;</td>
+      <td class="right mono muted">0</td>
       <td class="mono">${esc(l.loc)}</td>
-      <td class="mono muted">&nbsp;</td>
+      <td class="mono muted">00-00-00-00</td>
     </tr>`).join('');
 }
 
 // 업로드된 입고 양식과 동일한 열 순서(박스번호,바코드,정상수량,불량수량,정상로케이션,불량로케이션)의 TSV.
-// 박스번호·불량수량·불량로케이션은 관리하지 않아 빈 칸으로 채운다.
+// 박스번호는 관리하지 않아 빈 칸으로 채우고, 불량수량/불량로케이션은 항상 0 / 00-00-00-00 으로 통일한다.
 // 엑셀에 그대로 붙여넣을 수 있도록 헤더 없이 데이터 행만 만든다.
 function buildDayTsv() {
   return currentHistoryDayLogs()
-    .map(l => ['', l.barcode, l.qty, '', l.loc, ''].join('\t'))
+    .map(l => ['', l.barcode, l.qty, 0, l.loc, '00-00-00-00'].join('\t'))
     .join('\n');
 }
 
